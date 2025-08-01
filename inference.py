@@ -25,7 +25,7 @@ if platform.system() == "Windows":
 
 
 class Inference:
-    def __init__(self, device: str, src: int = 0):
+    def __init__(self, device1: str, device2: str, src: int = 0):
         tyro.extras.set_accent_color("bright_cyan")
         self.args = tyro.cli(ArgumentConfig)
         self.logger = logging.getLogger(__name__)
@@ -79,7 +79,8 @@ class Inference:
         self.temp_green = None
         self.set_background=True
         self.first_source = True
-        self.device = device
+        self.device1 = device1
+        self.device2 = device2
         self.session = ort.InferenceSession(
             f"{self.script_dir}/pretrained_weights/modnet/modnet_photographic_portrait_matting.onnx",
             providers=["CUDAExecutionProvider"],
@@ -100,106 +101,129 @@ class Inference:
             width=self.virtual_cam_res_x,
             height=self.virtual_cam_res_y,
             fps=30,
-            backend="v4l2loopback",
-            device=self.device,
+            backend=self.backend,
+            device=self.device1,
         ) as cam:
-            black_image = np.zeros(
-                (self.virtual_cam_res_y, self.virtual_cam_res_x, 3), dtype=np.uint8
-            )
-            while True:
-                if not self.running:
-                    self.cuda_cv2.operate(
-                        cam=cam,
-                        frame=black_image,
+            with pyvirtualcam.Camera(
+                width=self.virtual_cam_res_x,
+                height=self.virtual_cam_res_y,
+                fps=30,
+                backend=self.backend,
+                device=self.device2
+            ) as cam2:
+                black_image = np.zeros(
+                    (self.virtual_cam_res_y, self.virtual_cam_res_x, 3), dtype=np.uint8
+                )
+                while True:
+                    if not self.running:
+                        self.cuda_cv2.operate(
+                            cam=cam,
+                            frame=black_image,
+                            width=self.virtual_cam_res_x,
+                            height=self.virtual_cam_res_y,
+                            flip=False,
+                            color=False,
+                            send_to_cam=True,
+                        )
+                        self.cuda_cv2.operate(
+                            cam=cam2,
+                            frame=black_image,
+                            width=self.virtual_cam_res_x,
+                            height=self.virtual_cam_res_y,
+                            flip=False,
+                            color=False,
+                            send_to_cam=True,
+                        )
+                        continue
+                    else:
+                        black_image = None
+                        break
+                while True:
+                    if self.cap is None:
+                        self.cap = WebcamStream(width=self.virtual_cam_res_x, height=self.virtual_cam_res_y, src=self.src)
+                    if self.first_source is False:
+                        self.first_source = None
+                        (
+                            self.x_s,
+                            self.f_s,
+                            self.R_s,
+                            self.x_s_info,
+                            self.lip_delta_before_animation,
+                            self.crop_info,
+                            self.img_rgb,
+                        ) = (None, None, None, None, None, None, None)
+                        self.active = False
+                        self.first_iter = True
+                        self.source_image_path=None
+                        self.temp_green=None
+                        self.temp_source=None
+                    if self.first_source is True:
+                        self.first_source = False
+                        self.set_source(f"{os.path.dirname(self.script_dir)}/photos/1.jpg")
+                    loop_start = time.time()
+                    ret, frame = self.cap.read()
+                    if not ret:
+                        continue
+                    frame = self.cuda_cv2.operate(
+                        cam=None,
+                        frame=frame,
                         width=self.virtual_cam_res_x,
                         height=self.virtual_cam_res_y,
-                        flip=False,
-                        color=False,
-                        send_to_cam=True,
-                    )
-                    continue
-                else:
-                    black_image = None
-                    break
-            while True:
-                if self.cap is None:
-                    self.cap = WebcamStream(width=self.virtual_cam_res_x, height=self.virtual_cam_res_y, src=self.src)
-                if self.first_source is False:
-                    self.first_source = None
-                    (
-                        self.x_s,
-                        self.f_s,
-                        self.R_s,
-                        self.x_s_info,
-                        self.lip_delta_before_animation,
-                        self.crop_info,
-                        self.img_rgb,
-                    ) = (None, None, None, None, None, None, None)
-                    self.active = False
-                    self.first_iter = True
-                    self.source_image_path=None
-                    self.temp_green=None
-                    self.temp_source=None
-                if self.first_source is True:
-                    self.first_source = False
-                    self.set_source(f"{os.path.dirname(self.script_dir)}/photos/1.jpg")
-                loop_start = time.time()
-                ret, frame = self.cap.read()
-                if not ret:
-                    continue
-                frame = self.cuda_cv2.operate(
-                    cam=None,
-                    frame=frame,
-                    width=self.virtual_cam_res_x,
-                    height=self.virtual_cam_res_y,
-                    flip=True,
-                    color=True,
-                    send_to_cam=False,
-                )
-                self.logger.debug(
-                    f"Initial frame reading and refinement took{time.time()-loop_start}"
-                )
-                face_time = time.time()
-                is_face = face_detector(
-                    self.cuda_cv2.operate(cam=None, frame=frame, width=160, height=160),
-                    self.face_detector_model,
-                )
-                self.logger.debug(f"Face detector took {time.time()-face_time}")
-                self.temp_source_setter()
-                self.temp_green_setter()
-                if self.first_iter and self.source_image_path:
-                    self.logger.debug("DeepFake source image is set!")
-                    im_time = time.time()
-                    (
-                        self.x_s,
-                        self.f_s,
-                        self.R_s,
-                        self.x_s_info,
-                        self.lip_delta_before_animation,
-                        self.crop_info,
-                        self.img_rgb,
-                    ) = self.live_portrait_pipeline.execute_frame(
-                        frame, self.source_image_path
+                        flip=True,
+                        color=True,
+                        send_to_cam=False,
                     )
                     self.logger.debug(
-                        f"Source image set took {time.time()-im_time} seconds"
+                        f"Initial frame reading and refinement took{time.time()-loop_start}"
                     )
-                if is_face and self.img_rgb is not None:
-                    if self.source_image_path:
-                        mani_time = time.time()
-                        self.manipulation(cam=cam, frame=frame)
-                        self.logger.debug(f"Manipulation Took{time.time()-mani_time}")
+                    face_time = time.time()
+                    is_face = face_detector(
+                        self.cuda_cv2.operate(cam=None, frame=frame, width=160, height=160),
+                        self.face_detector_model,
+                    )
+                    self.logger.debug(f"Face detector took {time.time()-face_time}")
+                    self.temp_source_setter()
+                    self.temp_green_setter()
+                    if self.first_iter and self.source_image_path:
+                        self.logger.debug("DeepFake source image is set!")
+                        im_time = time.time()
+                        (
+                            self.x_s,
+                            self.f_s,
+                            self.R_s,
+                            self.x_s_info,
+                            self.lip_delta_before_animation,
+                            self.crop_info,
+                            self.img_rgb,
+                        ) = self.live_portrait_pipeline.execute_frame(
+                            frame, self.source_image_path
+                        )
+                        self.logger.debug(
+                            f"Source image set took {time.time()-im_time} seconds"
+                        )
+                    if is_face != False and self.img_rgb is not None:
+                        self.cuda_cv2.operate(self.add_face_frame(frame,is_face),
+                                              width=self.virtual_cam_res_x,
+                                              height=self.virtual_cam_res_y,
+                                              cam=cam2,
+                                              flip=False,
+                                              color=False,
+                                              send_to_cam=True)
+                        if self.source_image_path:
+                            mani_time = time.time()
+                            self.manipulation(cam=cam, frame=frame)
+                            self.logger.debug(f"Manipulation Took{time.time()-mani_time}")
+                        else:
+                            no_mani_time = time.time()
+                            self.no_manipulation(cam=cam, frame=frame)
+                            self.logger.debug(
+                                f"No manipulation Took{time.time()-no_mani_time}"
+                            )
                     else:
                         no_mani_time = time.time()
                         self.no_manipulation(cam=cam, frame=frame)
-                        self.logger.debug(
-                            f"No manipulation Took{time.time()-no_mani_time}"
-                        )
-                else:
-                    no_mani_time = time.time()
-                    self.no_manipulation(cam=cam, frame=frame)
-                    self.logger.debug(f"No manipulation Took{time.time()-no_mani_time}")
-                self.logger.debug(f"A loop took {time.time()-loop_start} seconds!")
+                        self.logger.debug(f"No manipulation Took{time.time()-no_mani_time}")
+                    self.logger.debug(f"A loop took {time.time()-loop_start} seconds!")
 
     def manipulation(self, cam, frame):
         mani = time.time()
@@ -469,7 +493,14 @@ class Inference:
         elif self.temp_green is None:
             self.green_screen = None
             self.green_img = None
-
+    def add_face_frame(self,frame,box):
+        if box is not None:
+            x1,y1,x2,y2 = box
+            h, w = frame.shape[:2]
+            if x1 < 0 or y1 < 0 or x2>w or y2>h:
+                return frame
+            cv2.rectangle(frame,(x1,y1),(x2,y2), (0,255,0), 2)
+            return frame
     def set_greenscreen(self, green_screen_path: str):
         if green_screen_path != self.green_screen:
             self.temp_green = green_screen_path
