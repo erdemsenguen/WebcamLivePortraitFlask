@@ -452,9 +452,7 @@ class Inference:
                 self.previous_green_screen = None
                 self.change_green_screen = True
                 self.logger.debug("Image set successfully!")
-                if self.source_image_path.endswith(
-                    "7.jpg"
-                ) or self.source_image_path.endswith("11.jpg"):
+                if self.source_image_path.endswith("7.jpg") or self.source_image_path.endswith("11.jpg") or self.source_image_path.endswith("13.jpg") or self.source_image_path.endswith("14.jpg"):
                     self.background_image = None
                 else:
                     self.background_image_path = random.choice(self.background_images)
