@@ -25,7 +25,7 @@ class FrameProcessor:
         cam: pyvirtualcam.Camera = None,
         width: int = None,
         height: int = None,
-    ) -> None:
+    ) -> np.ndarray:
         if self.use_cuda:
             return self.gpu(
                 frame,

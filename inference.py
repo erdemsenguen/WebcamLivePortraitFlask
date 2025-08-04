@@ -43,6 +43,10 @@ class Inference:
         self.live_portrait_pipeline = LivePortraitPipeline(
             inference_cfg=self.inference_cfg, crop_cfg=self.crop_cfg
         )
+        self.black_image=np.zeros(
+                (self.virtual_cam_res_y, self.virtual_cam_res_x, 3), dtype=np.uint8
+            )
+        os.makedirs("/tmp/demo",exist_ok=True)
         # Get the directory of the current script
         self.script_dir = os.path.dirname(os.path.abspath(__file__))
         self.background_images = [
@@ -88,6 +92,8 @@ class Inference:
         self.pad = np.zeros(
             (self.virtual_cam_res_y, self.virtual_cam_res_x, 3), dtype=np.uint8
         )
+        os.makedirs("/tmp/demo",exist_ok=True)
+        cv2.imwrite("/tmp/demo/refimg.jpg",self.black_image)
         self.conf_virt_live_webcam()
 
     def partial_fields(self, target_class, kwargs):
@@ -103,14 +109,12 @@ class Inference:
             backend="v4l2loopback",
             device=self.device,
         ) as cam:
-            black_image = np.zeros(
-                (self.virtual_cam_res_y, self.virtual_cam_res_x, 3), dtype=np.uint8
-            )
+            
             while True:
                 if not self.running:
                     self.cuda_cv2.operate(
                         cam=cam,
-                        frame=black_image,
+                        frame=self.black_image,
                         width=self.virtual_cam_res_x,
                         height=self.virtual_cam_res_y,
                         flip=False,
@@ -119,30 +123,10 @@ class Inference:
                     )
                     continue
                 else:
-                    black_image = None
                     break
             while True:
                 if self.cap is None:
                     self.cap = WebcamStream(width=self.virtual_cam_res_x, height=self.virtual_cam_res_y, src=self.src)
-                if self.first_source is False:
-                    self.first_source = None
-                    (
-                        self.x_s,
-                        self.f_s,
-                        self.R_s,
-                        self.x_s_info,
-                        self.lip_delta_before_animation,
-                        self.crop_info,
-                        self.img_rgb,
-                    ) = (None, None, None, None, None, None, None)
-                    self.active = False
-                    self.first_iter = True
-                    self.source_image_path=None
-                    self.temp_green=None
-                    self.temp_source=None
-                if self.first_source is True:
-                    self.first_source = False
-                    self.set_source(f"{os.path.dirname(self.script_dir)}/photos/1.jpg")
                 loop_start = time.time()
                 ret, frame = self.cap.read()
                 if not ret:
@@ -184,7 +168,8 @@ class Inference:
                     self.logger.debug(
                         f"Source image set took {time.time()-im_time} seconds"
                     )
-                if is_face and self.img_rgb is not None:
+                if is_face is not False and self.img_rgb is not None:
+                    self.add_face_frame(frame,is_face)
                     if self.source_image_path:
                         mani_time = time.time()
                         self.manipulation(cam=cam, frame=frame)
@@ -196,6 +181,7 @@ class Inference:
                             f"No manipulation Took{time.time()-no_mani_time}"
                         )
                 else:
+                    cv2.imwrite("/tmp/demo/refimg.jpg",self.black_image)
                     no_mani_time = time.time()
                     self.no_manipulation(cam=cam, frame=frame)
                     self.logger.debug(f"No manipulation Took{time.time()-no_mani_time}")
@@ -469,7 +455,18 @@ class Inference:
         elif self.temp_green is None:
             self.green_screen = None
             self.green_img = None
-
+    def add_face_frame(self,frame,box):
+        temp_frame=frame.copy()
+        temp_frame=self.cuda_cv2.operate(frame,color=True)
+        scale_x=1920/160
+        scale_y=1080/160
+        x1,y1,x2,y2=box
+        x1=int(x1*scale_x)
+        x2=int(x2*scale_x)
+        y1=int(y1*scale_y)
+        y2=int(y2*scale_y)
+        cv2.rectangle(temp_frame,(x1,y1),(x2,y2),(0,255,0),10)
+        cv2.imwrite("/tmp/demo/refimg.jpg",temp_frame,[cv2.IMWRITE_JPEG_QUALITY, 10])
     def set_greenscreen(self, green_screen_path: str):
         if green_screen_path != self.green_screen:
             self.temp_green = green_screen_path
@@ -499,5 +496,5 @@ if __name__ == "__main__":
         format="[%(asctime)s] %(levelname)s in %(name)s: %(message)s",
         handlers=[logging.StreamHandler(sys.stdout)],
     )
-    inf = Inference()
+    inf = Inference("/dev/video10")
     inf.main()

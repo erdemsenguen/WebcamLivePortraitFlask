@@ -262,8 +262,8 @@ def face_detector(frame, detector):
     boxes, _ = detector.detect(frame, input_size=(160, 160), max_num=1)
     if len(boxes) == 0:
         return False
-    else:
-        return True
+    box=boxes[0].astype(np.int32)
+    return box[:4]
 
 
 def monitor_crop(frame):
