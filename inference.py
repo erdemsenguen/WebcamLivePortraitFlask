@@ -434,7 +434,11 @@ class Inference:
 
     def set_source(self, source_img_path: str):
         if source_img_path == self.source_image_path:
+            self.first_iter = True
             self.source_image_path = None
+            self.temp_source = None
+            self.background_image = None
+            self.set_background= False
             self.temp_source = None
         else:
             self.temp_source = source_img_path
